@@ -49,9 +49,11 @@ describe("Crowdfunder", () => {
           const { crowdfunder, owner } = await loadFixture(
             deployErc721Crowdfunder,
           );
-          await expect(crowdfunder.connect(owner).mint()).to.be.revertedWith(
-            "The transaction value is diffrerent from one ether",
-          );
+          await expect(crowdfunder.connect(owner).mint()).to.be
+            .revertedWithCustomError(
+              crowdfunder,
+              "IncorrectValue",
+            );
         });
         it("should revert if the crowdfund is not available anymore", async () => {
           const { crowdfunder, owner } = await loadFixture(
@@ -61,9 +63,7 @@ describe("Crowdfunder", () => {
           await mine(MINE_BLOCKS);
           await expect(
             crowdfunder.connect(owner).mint({ value: ethers.parseEther("1") }),
-          ).to.be.revertedWith(
-            "The crowdfund is not available anymore",
-          );
+          ).to.be.revertedWithCustomError(crowdfunder, "CrowdfundEnded");
         });
       });
       describe("isDeployer", () => {
@@ -75,8 +75,9 @@ describe("Crowdfunder", () => {
           await mine(MINE_BLOCKS);
           await expect(
             crowdfunder.connect(otherAccount).withdraw(),
-          ).to.be.revertedWith(
-            "The sender of the transaction is not the deployer of the contract",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "SenderIsNotDeployer",
           );
         });
       });
@@ -87,19 +88,10 @@ describe("Crowdfunder", () => {
           );
           await expect(
             crowdfunder.connect(owner).withdraw(),
-          ).to.be.revertedWith(
-            "You cannot withdraw if the crowdfund is still active",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "CrowdfundNotEnded",
           );
-        });
-        it("Should revert if the crowdfund is cancelled", async () => {
-          const { crowdfunder, owner } = await loadFixture(
-            deployErc721Crowdfunder,
-          );
-          await mine(MINE_BLOCKS);
-          await crowdfunder.connect(owner).cancel();
-          await expect(
-            crowdfunder.connect(owner).withdraw(),
-          ).to.be.revertedWith("You cannot withdraw a cancelled crowdfund");
         });
         it("Should revert if the crowdfund objective is not met", async () => {
           const { crowdfunder, owner } = await loadFixture(
@@ -108,8 +100,9 @@ describe("Crowdfunder", () => {
           await mine(MINE_BLOCKS);
           await expect(
             crowdfunder.connect(owner).withdraw(),
-          ).to.be.revertedWith(
-            "You cannot withdraw if the crowdfund did not reach the objective funding",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "FundingObjectiveNotReached",
           );
         });
       });
@@ -121,11 +114,12 @@ describe("Crowdfunder", () => {
           );
           await expect(
             crowdfunder.connect(owner).cancel(),
-          ).to.be.revertedWith(
-            "The crowdfund is not ended so it cannot be cancelled",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "CrowdfundNotEnded",
           );
         });
-        it("Should revert if the crowdfund did not raise the funding objective", async () => {
+        it("Should revert if the crowdfund did raise the funding objective", async () => {
           const { crowdfunder, owner } = await loadFixture(
             deployErc721Crowdfunder,
           );
@@ -138,8 +132,9 @@ describe("Crowdfunder", () => {
           await mine(MINE_BLOCKS);
           await expect(
             crowdfunder.connect(owner).cancel(),
-          ).to.be.revertedWith(
-            "The objective founding was raised so it cannot be cancelled",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "FundingObjectiveReached",
           );
         });
       });
@@ -156,24 +151,9 @@ describe("Crowdfunder", () => {
           await crowdfunder.connect(owner).cancel();
           await expect(
             crowdfunder.connect(otherAccount).refund(BigInt(0)),
-          ).to.be.revertedWith(
-            "The sender does not own this token",
-          );
-        });
-        it("should revert if it was aleady refunded", async () => {
-          const { crowdfunder, owner } = await loadFixture(
-            deployErc721Crowdfunder,
-          );
-          await crowdfunder.connect(owner).mint({
-            value: ethers.parseEther("1"),
-          });
-          await mine(MINE_BLOCKS);
-          await crowdfunder.connect(owner).cancel();
-          await crowdfunder.connect(owner).refund(BigInt(0));
-          await expect(
-            crowdfunder.connect(owner).refund(BigInt(0)),
-          ).to.be.revertedWith(
-            "This token was already refunded",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "SenderIsNotOwner",
           );
         });
         it("should revert if the crowdfund is not cancelled", async () => {
@@ -186,8 +166,9 @@ describe("Crowdfunder", () => {
           await mine(MINE_BLOCKS);
           await expect(
             crowdfunder.connect(owner).refund(BigInt(0)),
-          ).to.be.revertedWith(
-            "The crowdfund needs to be cancelled before it can be refunded",
+          ).to.be.revertedWithCustomError(
+            crowdfunder,
+            "CrowdfundIsActive",
           );
         });
       });

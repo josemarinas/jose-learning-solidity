@@ -2,32 +2,36 @@
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "./errors.sol";
 
+/// @title ERC721CrowdFunder
+/// @author Jose Marinas
+/// @notice Crowdfund an NFT
 contract ERC721CrowdFunder is ERC721 {
-    // store nft balances
-    mapping(uint => address) private balances;
-    // store if a token was refunded
-    mapping(uint => bool) private refunds;
-    // nonce for the token id
-    uint private nonce = 0;
-    // boolean for the state of the crowdfund
+    /// @notice Token id
+    uint private tokenId = 0;
+
+    /// @notice Crowdfund is active or not
     bool public isActive = true;
-    // objective funding
+
+    /// @notice Objective funding of the crowdfund
     uint public fundingObjective;
-    // end block number
-    uint public endBlockNumber;
-    // deployer address
+
+    /// @notice Timestamp when the crowdfund ends
+    uint public endTimestamp;
+
+    /// @notice Address of the deployer
     address public deployer;
 
+    /// @notice Emit an event when the crowdfund is cancelled
     event Cancelled();
 
     // modifiers
     // check if the sender is the deployer
     modifier isDeployer() {
-        require(
-            msg.sender == deployer,
-            "The sender of the transaction is not the deployer of the contract"
-        );
+        if (msg.sender != deployer) {
+            revert SenderIsNotDeployer();
+        }
         _;
     }
 
@@ -35,16 +39,12 @@ contract ERC721CrowdFunder is ERC721 {
     // the crowdfund is cancelled
     // the sender must be the owner of the token
     // the token must not be refunded yet
-    modifier canRefund(uint tokenId) {
-        require(
-            isActive == false,
-            "The crowdfund needs to be cancelled before it can be refunded"
-        );
-        require(
-            balances[tokenId] == msg.sender,
-            "The sender does not own this token"
-        );
-        require(refunds[tokenId] == false, "This token was already refunded");
+    modifier canRefund(uint _tokenId) {
+        if (isActive) {
+            revert CrowdfundIsActive();
+        } else if (ownerOf(_tokenId) != msg.sender) {
+            revert SenderIsNotOwner(msg.sender, tokenId);
+        }
         _;
     }
 
@@ -52,14 +52,14 @@ contract ERC721CrowdFunder is ERC721 {
     // the crowdfund must be ended
     // the crowdfund must not have reached the objective funding
     modifier canCancel() {
-        require(
-            block.number >= endBlockNumber,
-            "The crowdfund is not ended so it cannot be cancelled"
-        );
-        require(
-            address(this).balance < fundingObjective,
-            "The objective founding was raised so it cannot be cancelled"
-        );
+        if (block.timestamp < endTimestamp) {
+            revert CrowdfundNotEnded(endTimestamp, block.timestamp);
+        } else if (address(this).balance >= fundingObjective) {
+            revert FundingObjectiveReached(
+                fundingObjective,
+                address(this).balance
+            );
+        }
         _;
     }
 
@@ -67,14 +67,11 @@ contract ERC721CrowdFunder is ERC721 {
     // the crowdfund must be active => not cancelled
     // the crowdfund must not be ended
     modifier canMint() {
-        require(
-            block.number <= endBlockNumber,
-            "The crowdfund is not available anymore"
-        );
-        require(
-            msg.value == 1 ether,
-            "The transaction value is diffrerent from one ether"
-        );
+        if (block.timestamp > endTimestamp) {
+            revert CrowdfundEnded(endTimestamp, block.timestamp);
+        } else if (msg.value != 1 ether) {
+            revert IncorrectValue(msg.value, 1 ether);
+        }
         _;
     }
 
@@ -83,15 +80,14 @@ contract ERC721CrowdFunder is ERC721 {
     // the crowdfund must be active => not cancelled
     // the crowdfund must have reached the objective funding
     modifier canWithdraw() {
-        require(
-            block.number > endBlockNumber,
-            "You cannot withdraw if the crowdfund is still active"
-        );
-        require(isActive == true, "You cannot withdraw a cancelled crowdfund");
-        require(
-            address(this).balance >= fundingObjective,
-            "You cannot withdraw if the crowdfund did not reach the objective funding"
-        );
+        if (block.timestamp < endTimestamp) {
+            revert CrowdfundNotEnded(endTimestamp, block.timestamp);
+        } else if (address(this).balance < fundingObjective) {
+            revert FundingObjectiveNotReached(
+                fundingObjective,
+                address(this).balance
+            );
+        }
         _;
     }
 
@@ -101,29 +97,38 @@ contract ERC721CrowdFunder is ERC721 {
         uint _fundingObjective,
         address _deployer
     ) ERC721(_name, _symbol) {
-        endBlockNumber = block.number + 30 days;
+        endTimestamp = block.timestamp + 30 days;
         fundingObjective = _fundingObjective;
         deployer = _deployer;
     }
 
+    /// @notice Mint an NFT if you send 1 ether
     function mint() public payable canMint {
-        _safeMint(msg.sender, nonce);
-        balances[nonce] = msg.sender;
-        refunds[nonce] = false;
-        nonce += 1;
+        _safeMint(msg.sender, tokenId);
+        tokenId += 1;
     }
 
+    /// @notice Owner can withdraw the funds if the crowdfund is successful
     function withdraw() public isDeployer canWithdraw {
-        payable(msg.sender).transfer(address(this).balance);
+        (bool sent, ) = msg.sender.call{value: address(this).balance}("");
+        if (!sent) {
+            revert FailedToWithdraw();
+        }
     }
 
+    /// @notice Cancel the crowdfund if tjhe funding objective is not reached
     function cancel() public isDeployer canCancel {
         isActive = false;
         emit Cancelled();
     }
 
-    function refund(uint tokenId) public canRefund(tokenId) {
-        payable(msg.sender).transfer(1 ether);
-        refunds[tokenId] = true;
+    /// @notice Refund the sender if the crowdfund is cancelled
+    /// @param _tokenId The id of the token to refund
+    function refund(uint _tokenId) public canRefund(_tokenId) {
+        _burn(_tokenId);
+        (bool sent, ) = msg.sender.call{value: 1 ether}("");
+        if (!sent) {
+            revert FailedToRefund();
+        }
     }
 }
