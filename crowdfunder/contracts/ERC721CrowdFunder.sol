@@ -2,12 +2,30 @@
 pragma solidity ^0.8.17;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "./errors.sol";
+
+enum CrowdfundState {
+    Active,
+    Cancelled,
+    Ended
+}
 
 /// @title ERC721CrowdFunder
 /// @author Jose Marinas
 /// @notice Crowdfund an NFT
 contract ERC721CrowdFunder is ERC721 {
+    // errors
+    error SenderIsNotDeployer();
+    error CrowdfundNotActive();
+    error CrowdfundIsActive();
+    error SenderIsNotOwner(address sender, uint tokenId);
+    error FundingObjectiveNotReached(uint fundingObjective, uint balance);
+    error FundingObjectiveReached(uint fundingObjective, uint balance);
+    error CrowdfundNotEnded(uint endTimestamp, uint blockTimestamp);
+    error CrowdfundEnded(uint endTimestamp, uint blockTimestamp);
+    error IncorrectValue(uint value, uint price);
+    error FailedToRefund();
+    error FailedToWithdraw();
+
     /// @notice Token id
     uint private tokenId = 0;
 
@@ -48,18 +66,11 @@ contract ERC721CrowdFunder is ERC721 {
         _;
     }
 
-    // chcek if the crowdfund can be cancelled
+    // check if the crowdfund can be cancelled
     // the crowdfund must be ended
     // the crowdfund must not have reached the objective funding
     modifier canCancel() {
-        if (block.timestamp < endTimestamp) {
-            revert CrowdfundNotEnded(endTimestamp, block.timestamp);
-        } else if (address(this).balance >= fundingObjective) {
-            revert FundingObjectiveReached(
-                fundingObjective,
-                address(this).balance
-            );
-        }
+       
         _;
     }
 
@@ -67,11 +78,6 @@ contract ERC721CrowdFunder is ERC721 {
     // the crowdfund must be active => not cancelled
     // the crowdfund must not be ended
     modifier canMint() {
-        if (block.timestamp > endTimestamp) {
-            revert CrowdfundEnded(endTimestamp, block.timestamp);
-        } else if (msg.value != 1 ether) {
-            revert IncorrectValue(msg.value, 1 ether);
-        }
         _;
     }
 
@@ -80,14 +86,7 @@ contract ERC721CrowdFunder is ERC721 {
     // the crowdfund must be active => not cancelled
     // the crowdfund must have reached the objective funding
     modifier canWithdraw() {
-        if (block.timestamp < endTimestamp) {
-            revert CrowdfundNotEnded(endTimestamp, block.timestamp);
-        } else if (address(this).balance < fundingObjective) {
-            revert FundingObjectiveNotReached(
-                fundingObjective,
-                address(this).balance
-            );
-        }
+       
         _;
     }
 
@@ -103,21 +102,51 @@ contract ERC721CrowdFunder is ERC721 {
     }
 
     /// @notice Mint an NFT if you send 1 ether
-    function mint() public payable canMint {
+    function mint() public payable {
+        // check if the crowdfund is active
+        if (block.timestamp > endTimestamp) {
+            revert CrowdfundEnded(endTimestamp, block.timestamp);
+        }
+        // check if the value is correct
+        if (msg.value != 1 ether) {
+            revert IncorrectValue(msg.value, 1 ether);
+        }
         _safeMint(msg.sender, tokenId);
         tokenId += 1;
     }
 
     /// @notice Owner can withdraw the funds if the crowdfund is successful
-    function withdraw() public isDeployer canWithdraw {
+    function withdraw() public isDeployer {
+        // check if the crowdfund is ended
+        if (block.timestamp < endTimestamp) {
+            revert CrowdfundNotEnded(endTimestamp, block.timestamp);
+        } 
+        // check if the objective was met
+        if (address(this).balance < fundingObjective) {
+            revert FundingObjectiveNotReached(
+                fundingObjective,
+                address(this).balance
+            );
+        }
         (bool sent, ) = msg.sender.call{value: address(this).balance}("");
         if (!sent) {
             revert FailedToWithdraw();
         }
     }
 
-    /// @notice Cancel the crowdfund if tjhe funding objective is not reached
-    function cancel() public isDeployer canCancel {
+    /// @notice Cancel the crowdfund if the funding objective is not met
+    function cancel() public isDeployer {
+        // check if the crowdfund is ended
+        if (block.timestamp < endTimestamp) {
+            revert CrowdfundNotEnded(endTimestamp, block.timestamp);
+        } 
+        // check if the objective was met
+        if (address(this).balance > fundingObjective - 1) {
+            revert FundingObjectiveReached(
+                fundingObjective,
+                address(this).balance
+            );
+        }
         isActive = false;
         emit Cancelled();
     }
@@ -131,4 +160,18 @@ contract ERC721CrowdFunder is ERC721 {
             revert FailedToRefund();
         }
     }
+
+    /// @notice Get the state of the crowdfund
+    function getState() public view returns (CrowdfundState) {
+        if (isActive) {
+            return CrowdfundState.Active;
+        } else if (block.timestamp < endTimestamp) {
+            return CrowdfundState.Cancelled;
+        } else {
+            return CrowdfundState.Ended;
+        }
+    }
+    
 }
+
+
